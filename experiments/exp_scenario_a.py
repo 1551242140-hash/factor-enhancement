@@ -1,0 +1,265 @@
+"""
+实验A：图有效场景
+
+场景设定：
+- 收益由自身因子 + 邻居因子共同决定
+- 因此图增强方法、GNN 方法应当优于仅使用自身因子的 baseline
+
+输出：
+1. 原始线性模型结果
+2. 图增强线性模型结果
+3. GNN 模型结果（可选）
+4. 模型对比表
+"""
+
+import numpy as np
+
+import config
+
+from data.simulate_data import simulate_factor_panel
+from data.generate_returns import generate_returns_with_graph_signal
+from data.split_data import time_series_split
+
+from graph.build_graph import build_dynamic_graphs_from_factors
+
+from features.preprocess import preprocess_panel
+from features.raw_features import align_features_and_target
+from features.graph_features import build_panel_graph_features
+
+from models.linear_model import run_linear_baseline
+from models.gnn_model import GCNRegressor
+from models.trainer import train_gnn, predict_gnn
+
+from evaluation.metrics import evaluate_panel_predictions
+from evaluation.portfolio import evaluate_portfolio_performance
+from evaluation.compare_models import compare_model_outputs, print_model_comparison
+
+from utils.seed import set_seed
+from utils.logger import get_logger, log_section
+
+
+def run_experiment_scenario_a():
+    """
+    运行图有效场景实验
+    """
+    set_seed(config.SEED)
+    logger = get_logger(name="exp_scenario_a")
+
+    log_section(logger, "实验A：图有效场景（邻居信息有效）")
+
+    # =========================
+    # 1. 生成因子数据
+    # =========================
+    data_dict = simulate_factor_panel(
+        n_stocks=config.N_STOCKS,
+        t_periods=config.T_PERIODS,
+        k_features=config.K_FEATURES,
+        n_groups=config.N_GROUPS,
+        rho_group=config.RHO_GROUP,
+        sigma_group=config.SIGMA_GROUP,
+        sigma_idio=config.SIGMA_IDIO,
+        seed=config.SEED,
+    )
+    X = data_dict["X"]
+
+    # 预处理
+    X = preprocess_panel(X)
+
+    # =========================
+    # 2. 构造真实图 / 估计图
+    # =========================
+    # 这里为了模拟“图有效”，直接用因子图作为真实图和估计图
+    A = build_dynamic_graphs_from_factors(
+        X=X,
+        graph_type=config.GRAPH_TYPE,
+        k=config.K_NEIGHBORS,
+        tau=config.TAU,
+        symmetrize=True,
+        add_self_loop=config.ADD_SELF_LOOP,
+        row_norm=not config.NORMALIZE_ADJ,
+        gcn_norm=config.NORMALIZE_ADJ,
+    )
+
+    # =========================
+    # 3. 生成收益（图有效机制）
+    # =========================
+    y = generate_returns_with_graph_signal(
+        X=X,
+        A_true=A,
+        beta_self=config.BETA_SELF,
+        beta_neighbor=config.BETA_NEIGHBOR,
+        gamma=config.GAMMA,
+        noise_std=config.NOISE_STD,
+        seed=config.SEED,
+    )
+
+    # =========================
+    # 4. 对齐 X[t] -> y[t+1]
+    # =========================
+    aligned_raw = align_features_and_target(X, y, lag=1)
+    X_aligned = aligned_raw["X_aligned"]
+    y_aligned = aligned_raw["y_aligned"]
+    A_aligned = A[:-1]
+
+    # 图增强特征 [X, AX]
+    X_graph = build_panel_graph_features(
+        X=X_aligned,
+        A=A_aligned,
+        num_hops=config.NUM_HOPS,
+        include_self=config.CONCAT_FEATURES,
+    )
+
+    # =========================
+    # 5. 切分训练/验证/测试集
+    # =========================
+    split_raw = time_series_split(
+        X=X_aligned,
+        y=y_aligned,
+        train_ratio=config.TRAIN_RATIO,
+        valid_ratio=config.VALID_RATIO,
+        test_ratio=config.TEST_RATIO,
+    )
+
+    split_graph = time_series_split(
+        X=X_graph,
+        y=y_aligned,
+        train_ratio=config.TRAIN_RATIO,
+        valid_ratio=config.VALID_RATIO,
+        test_ratio=config.TEST_RATIO,
+    )
+
+    split_gnn = time_series_split(
+        X=X_aligned,
+        y=y_aligned,
+        A=A_aligned,
+        train_ratio=config.TRAIN_RATIO,
+        valid_ratio=config.VALID_RATIO,
+        test_ratio=config.TEST_RATIO,
+    )
+
+    results = {}
+
+    # =========================
+    # 6. 原始线性模型
+    # =========================
+    logger.info("训练原始线性模型...")
+    raw_res = run_linear_baseline(
+        X_train=split_raw["X_train"],
+        y_train=split_raw["y_train"],
+        X_test=split_raw["X_test"],
+        use_ridge=config.USE_RIDGE,
+        ridge_alpha=config.RIDGE_ALPHA,
+    )
+    y_pred_raw = raw_res["y_pred"]
+
+    metrics_raw = evaluate_panel_predictions(split_raw["y_test"], y_pred_raw)
+    portfolio_raw = evaluate_portfolio_performance(
+        y_true=split_raw["y_test"],
+        y_pred=y_pred_raw,
+        n_bins=config.N_QUANTILES,
+        top_quantile=config.TOP_QUANTILE,
+        bottom_quantile=config.BOTTOM_QUANTILE,
+    )
+
+    results["raw_linear"] = {
+        "metrics": metrics_raw,
+        "portfolio": portfolio_raw,
+    }
+
+    # =========================
+    # 7. 图增强线性模型
+    # =========================
+    logger.info("训练图增强线性模型...")
+    graph_res = run_linear_baseline(
+        X_train=split_graph["X_train"],
+        y_train=split_graph["y_train"],
+        X_test=split_graph["X_test"],
+        use_ridge=config.USE_RIDGE,
+        ridge_alpha=config.RIDGE_ALPHA,
+    )
+    y_pred_graph = graph_res["y_pred"]
+
+    metrics_graph = evaluate_panel_predictions(split_graph["y_test"], y_pred_graph)
+    portfolio_graph = evaluate_portfolio_performance(
+        y_true=split_graph["y_test"],
+        y_pred=y_pred_graph,
+        n_bins=config.N_QUANTILES,
+        top_quantile=config.TOP_QUANTILE,
+        bottom_quantile=config.BOTTOM_QUANTILE,
+    )
+
+    results["graph_linear"] = {
+        "metrics": metrics_graph,
+        "portfolio": portfolio_graph,
+    }
+
+    # =========================
+    # 8. GNN 模型（可选）
+    # =========================
+    if config.USE_GNN:
+        logger.info("训练 GNN 模型...")
+
+        model = GCNRegressor(
+            in_dim=split_gnn["X_train"].shape[-1],
+            hidden_dim=config.HIDDEN_DIM,
+            out_dim=1,
+            num_layers=getattr(config, "NUM_GNN_LAYERS", 32),
+            dropout=config.DROPOUT,
+        )
+
+        train_out = train_gnn(
+            model=model,
+            X_train=split_gnn["X_train"],
+            A_train=split_gnn["A_train"],
+            y_train=split_gnn["y_train"],
+            X_valid=split_gnn["X_valid"],
+            A_valid=split_gnn["A_valid"],
+            y_valid=split_gnn["y_valid"],
+            lr=config.LR,
+            epochs=config.EPOCHS,
+            weight_decay=config.WEIGHT_DECAY,
+            patience=10,
+            print_every=config.PRINT_EVERY,
+            verbose=config.VERBOSE,
+        )
+
+        best_model = train_out["model"]
+        y_pred_gnn = predict_gnn(
+            model=best_model,
+            X=split_gnn["X_test"],
+            A=split_gnn["A_test"],
+        )
+
+        metrics_gnn = evaluate_panel_predictions(split_gnn["y_test"], y_pred_gnn)
+        portfolio_gnn = evaluate_portfolio_performance(
+            y_true=split_gnn["y_test"],
+            y_pred=y_pred_gnn,
+            n_bins=config.N_QUANTILES,
+            top_quantile=config.TOP_QUANTILE,
+            bottom_quantile=config.BOTTOM_QUANTILE,
+        )
+
+        results["gnn"] = {
+            "metrics": metrics_gnn,
+            "portfolio": portfolio_gnn,
+        }
+
+    # =========================
+    # 9. 输出结果
+    # =========================
+    df = compare_model_outputs(results)
+    print_model_comparison(df)
+
+    return {
+        "results": results,
+        "comparison": df,
+        "data": {
+            "X": X_aligned,
+            "y": y_aligned,
+            "A": A_aligned,
+        },
+    }
+
+
+if __name__ == "__main__":
+    run_experiment_scenario_a()
