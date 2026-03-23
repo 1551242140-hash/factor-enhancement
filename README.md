@@ -40,7 +40,8 @@ stock_graph_factor/
 │   ├── exp_scenario_a.py        # 实验 A：图有效场景 (邻居信息对收益有贡献)
 │   ├── exp_scenario_b.py        # 实验 B：图无效场景 (收益仅由自身因子决定)
 │   ├── exp_scenario_c.py        # 实验 C：错图/误导场景 (图结构与真实收益机制错配)
-│   └── sensitivity.py           # 敏感性分析 (gamma 信号强度, noise 噪声水平, k 邻居数)
+│   ├── sensitivity.py           # 敏感性分析 (gamma 信号强度, noise 噪声水平, k 邻居数)
+│   └── run_diagnostics.py       # 图结构有效性事前诊断检验
 │
 ├── outputs/                     # 实验结果与可视化图片输出目录 (自动生成)
 │
