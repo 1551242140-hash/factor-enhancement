@@ -10,6 +10,12 @@ import numpy as np
 import pandas as pd
 import os
 
+import sys
+import os
+
+# 将项目根目录添加到系统路径中，以解决导入 config 和其他模块的问题
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import config
 from data.simulate_data import simulate_factor_panel
 from data.generate_returns import generate_returns_with_graph_signal

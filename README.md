@@ -61,7 +61,14 @@ stock_graph_factor/
 2. **敏感性分析**：
    - 探究邻居信号强度（`gamma`）、噪声水平（`noise`）以及构图时选择的邻居数量（`k`）对图增强效果的具体影响。
 
-3. **可视化分析**：
+3. **事前统计诊断检验**：
+   在构建复杂的 GNN 模型前，提供一套完整的统计诊断工具（`run_diagnostics.py`），用于量化图结构的增量价值，避免盲目使用图模型：
+   - **Moran's I (莫兰指数)**：检验收益在图上的空间聚集性。
+   - **Dirichlet Energy (图平滑性)**：度量图信号的平滑程度。
+   - **Residual Correlation (残差相关性)**：检验基础线性模型残差在图邻居间是否依然存在相关性（捕捉未解释的溢出 Alpha）。
+   - **Delta R2 (增量解释力)**：简单回归中引入邻居特征带来的 $R^2$ 提升。
+
+4. **可视化分析**：
    - 自动绘制不同模型间的 $R^2$、Mean IC 对比柱状图。
    - 自动绘制敏感性分析参数变化带来的增量效果折线图。
 
@@ -89,8 +96,15 @@ python main.py
 ```
 运行完成后，可在终端查看模型表现对比表格，并在 `outputs/` 目录下找到生成的 CSV 报表与对比图表（如 `experiment_A_r2.png`）。
 
-### 3. 运行敏感性分析
-在 `main.py` 中将 `RUN_MODE` 设置为 `"sensitivity"`，并指定需要分析的参数 `SENSITIVITY_NAME`（可选：`"gamma"`, `"noise"`, `"k"`）：
+### 3. 运行事前图诊断检验
+在构建模型前，你可以先运行诊断脚本，快速判断当前设定的图结构是否具有增量预测能力：
+```bash
+python experiments/run_diagnostics.py
+```
+这会输出三个场景下 Moran's I、残差相关性等核心指标的对比结果，结果会保存到 `outputs/diagnostics_summary.csv`。
+
+### 4. 运行敏感性分析
+在 `main.py` 中将 `RUN_MODE` 设置为 `"sensitivity"`，并指定需要分析的参数 `SENSITIVITY_NAME`（可选：`"gamma"`, `"noise"`, `"k"`, `"all"`）：
 
 ```python
 # main.py
